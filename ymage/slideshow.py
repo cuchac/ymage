@@ -24,6 +24,8 @@ from random import randint
 
 from ymage.helpers import reschedule
 from ymage.transition import Transition
+import Queue
+import thread
 
 class Slideshow(object):
     def __init__(self, options):
@@ -52,6 +54,8 @@ class Slideshow(object):
         self.slides = self.options.paths
         self.slideCache = {}
         self.slideCacheLRU = []
+        self.loadQueue = Queue.Queue()
+        self.loadThread = thread.start_new_thread(self.loaderThread, ())
 
     def get_current(self):
         return unicode(self.slides[self.index], "utf-8")
@@ -132,11 +136,7 @@ class Slideshow(object):
     def draw_slide(self, window_w, window_h, index = -1):
         if index < 0:
             index = self.index
-        # we are in fast path, so no loading allowed. 
-        # Better to skip paint but remain quick
-        if index not in self.slideCache.keys():
-            return
-        slide = self.slideCache[index]
+        slide = self.ensure_slide_loaded(index)
         image_ratio = slide.width / slide.height
         window_ratio = window_w / window_h
         if image_ratio > window_ratio:
@@ -172,20 +172,38 @@ class Slideshow(object):
                 pass
         if action != "reschedule":
             self.save_last()
-            self.load_slide(self.index)
+            self.schedule_slide_load(self.index)
+            self.schedule_slide_load(self.index+1)
         if curr_index != self.index:
             self.transition.add_transition(curr_index, self.index)
         reschedule(self.display, self.options.duration)
         
-    def load_slide(self, index):
+    def schedule_slide_load(self, index):
+        if index not in self.slideCache.keys():
+            self.loadQueue.put(index)
+            
+    def ensure_slide_loaded(self, index):
+        if index not in self.slideCache.keys():
+            self.schedule_slide_load(index)
+            self.loadQueue.join()
+        return self.slideCache[index]
+    
+    def load_slide(self, index):    
         if index not in self.slideCache.keys():
             if len(self.slideCache) > 3:
                 delIndex = self.slideCacheLRU.pop()
                 del self.slideCache[delIndex]
             # convert image directly into texture => transfer into GPU
             # this does not delay first draw of image
-            self.slideCache[index] = image.load(self.slides[self.index]).get_texture()
+            self.slideCache[index] = image.load(self.slides[index])
+            image.load(self.slides[index]).get_texture()
             
         if index in self.slideCacheLRU:
             self.slideCacheLRU.remove(index)
         self.slideCacheLRU.insert(0, index)
+        
+    def loaderThread(self):
+        while True:
+            index = self.loadQueue.get()
+            self.load_slide(index)
+            self.loadQueue.task_done()

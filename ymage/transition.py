@@ -83,5 +83,3 @@ class TransitionBlend(Transition):
         self.slideshow.draw_slide(width, height, transition["previous"])
         gl.glBlendColor(0.0, 0.0, 0.0, 1.0-transition["phase"])
         self.slideshow.draw_slide(width, height, transition["next"])
-
-        
